@@ -4,6 +4,10 @@ import seaborn as sns
 import warnings
 warnings.filterwarnings('ignore')
 
+# load input file: PP,XD,DA mapped; PF, PF_cube generated
+df=pd.read_csv('df_LP_pf_period.csv',low_memory=False)
+
+
 # Generate CastleGate list
 CG_list=df.loc[df['cg_flag']==1,'supplier_name'].unique()
 
