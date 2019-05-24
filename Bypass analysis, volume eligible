@@ -1,0 +1,225 @@
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import warnings
+warnings.filterwarnings('ignore')
+
+# Generate CastleGate list
+CG_list=df.loc[df['cg_flag']==1,'supplier_name'].unique()
+
+
+print(CG_list)
+
+df.loc[(df.supplier_name=='Dallas'),'supplier_name']='Lancaster'
+df.loc[(df.supplier_name=='Toronto'),'supplier_name']='Mississauga'
+
+
+# CG flag
+def get_CGflag(df,DAName,XDname,PPname):
+    
+    #
+    df['PP_warehouse'] = df[PPname].str.rsplit('_').str[-2]
+    df['XD_warehouse'] = df[XDname].str.rsplit('_').str[-2]
+    df['DA_warehouse'] = df[DAName].str.rsplit('_').str[2]
+
+    # Generate CastleGate list
+    CG_list=df.loc[df['cg_flag']==1,'supplier_name'].unique()
+
+    # flag columns
+    df.loc[df['supplier_name']==df['PP_warehouse'],'CG_PP']=1
+    df.loc[df['supplier_name']==df['XD_warehouse'],'CG_XD']=1
+    df.loc[df['supplier_name']==df['DA_warehouse'],'CG_DA']=1
+    
+    df['CG_PP']=df['CG_PP'].fillna(0)
+    df['CG_XD']=df['CG_XD'].fillna(0)
+    df['CG_DA']=df['CG_DA'].fillna(0)
+    
+    return df
+    
+ 
+supplier_list=[37125,38779,28794,43719,28649,25145,25187,22195,19784,41278]
+
+
+## Bypass Analysis - Suppliers to DA
+
+def get_supplierBypass(df,supplier_list,DAName,XDname,PPname,PF_cube):
+    
+    
+    ##################################################################################################################
+    ### supplier to DA bypass
+    #filter out bypass unable suppliers & colocated CG
+    df['supplierBypass_tech']=df['suid'].apply(lambda x:1 if (x in supplier_list) else 0)
+    df_eligible=df[(df.supplierBypass_tech==0)&(df.CG_DA==0)&(df.CG_PP==0)]
+    
+    
+    # get Supplier to DA bypass list based on LP cube
+    df_supda=(df_eligible.groupby(['suid','supplier_name',DAName,'cg_flag'])[PF_cube].
+              agg({PF_cube: 'sum','forecast_date':'count'}).reset_index().sort_values(by=PF_cube,ascending=False))
+    df_bypass_SUPtoDA=(df_supda[(df_supda[PF_cube] >=15200)].
+                       rename(index=str,columns={PF_cube:'cube_mth_pf','forecast_date':'Pocount_LP'}))
+    
+    # mark bypassed volume
+    df_bypass_SUPtoDA['bypass_flag']=1
+    marker=df_bypass_SUPtoDA[['suid',DAName,'bypass_flag']]
+    df_1=df_eligible.merge(marker[['suid',DAName,'bypass_flag']], on=['suid',DAName], how='left')
+    df_1['bypass_flag']=np.where(df_1['bypass_flag']==1,1,0)
+    
+    
+    ###################################################################################################################
+    ### supplier to XD bypass
+    
+    # exclude Supplier to DA 
+    df_2=df_1[(df_1.bypass_flag ==0)&(df_1.PP_warehouse !=df_1.XD_warehouse)]
+    
+    # get Supplier to DA bypass list based on LP cube
+    df_supxd1=(df_2.groupby(['suid','supplier_name',XDname])[PF_cube].agg({PF_cube: 'sum','forecast_date':'count'}).
+               reset_index().sort_values(by=PF_cube,ascending=False))
+    
+    ## get Supplier to XD bypass list based on LP cube
+    #filter out suspicious supplier 
+    df_bypass_SUPtoXD=df_supxd1[(df_supxd1[PF_cube] >=15200)]
+
+    df_bypass_SUPtoXD=df_bypass_SUPtoXD.rename(index=str,columns={PF_cube:'cube_mth_pf','forecast_date':'Pocount_LP'})
+    
+    
+    
+    return df_bypass_SUPtoDA,df_bypass_SUPtoXD
+    
+    
+ def adjust_forwardPosition(df,XDName):
+    
+    df['bypass_flag_supxd']=1
+        
+    ###adjust for forward positioned sups
+    #Ashley
+    df['bypass_flag_supxd']=np.where((df['suid']==12399) & (df[XDName]=='XD_Cranbury_NJ'),0,
+                                       df['bypass_flag_supxd'])
+    df['bypass_flag_supxd']=np.where((df['suid']==12397) & (df[XDName]=='XD_Lathrop_CA'),0,
+                                       df['bypass_flag_supxd'])
+    df['bypass_flag_supxd']=np.where((df['suid']==12397) & (df[XDName]=='XD_Perris_CA'),0,
+                                       df['bypass_flag_supxd'])
+    df['bypass_flag_supxd']=np.where((df['suid']==12397) & (df[XDName]=='XD_Lancaster_TX'),0,
+                                       df['bypass_flag_supxd'])
+    df['bypass_flag_supxd']=np.where((df['suid']==12395) & (df[XDName]=='XD_Lancaster_TX'),0,
+                                       df['bypass_flag_supxd'])
+    df['bypass_flag_supxd']=np.where((df['suid']==12396) & (df[XDName]=='XD_Elgin_IL'),0,
+                                       df['bypass_flag_supxd'])
+    df['bypass_flag_supxd']=np.where((df['suid']==12399) & (df[XDName]=='XD_Elgin_IL'),0,
+                                       df['bypass_flag_supxd'])
+    df['bypass_flag_supxd']=np.where((df['suid']==12398) & (df[XDName]=='XD_Elgin_IL'),0,
+                                       df['bypass_flag_supxd'])
+    
+    #UFI
+    df['bypass_flag_supxd']=np.where((df['suid']==25144) & (df[XDName]=='XD_Cranbury_NJ'),0,
+                                       df['bypass_flag_supxd'])
+    
+    #Coaster
+    df['bypass_flag_supxd']=np.where((df['suid']==3998) & (df[XDName]=='XD_Cranbury_NJ'),0,
+                                       df['bypass_flag_supxd'])
+    
+    #### delete after this
+    df['bypass_flag_supxd']=np.where((df['suid']==40230),0,df['bypass_flag_supxd'])
+    
+    # result
+    df_bypass_SUPtoXD=df[df.bypass_flag_supxd==1]
+    
+    return df_bypass_SUPtoXD
+    
+    
+ def remove_cgsupplier(df,flagname):
+    
+    df[flagname]=1
+        
+    ### remove hold for 
+    # East End Imports CA & NJ
+    df[flagname]=np.where((df['suid']==28266) | (df['suid']==39912),0,df[flagname])
+    
+    # Poundex Associates Corporation 
+    df[flagname]=np.where((df['suid']==7327),0,df[flagname])
+    
+    #  Star Home Living Corp. CA 91761
+    df[flagname]=np.where((df['suid']==38431),0,df[flagname])
+    
+    #  Progressive Furniture Inc. NC
+    df[flagname]=np.where((df['suid']==36298),0,df[flagname])
+    
+    # result
+    df_bypass_SUPtoXD=df[df[flagname]==1]
+    
+    return df_bypass_SUPtoXD
+    
+    
+ ##### Bypass analysis, PP to DA
+ def filterOut_supplierBypass(supDA,supXD,DAname,XDname,df_CG):
+    
+    #sup_da
+    supDA=supDA[['suid',DAname]].copy()
+    supDA['sup_da_flag']=1
+    #sup_xd
+    supXD=supXD[['suid',XDname]].copy()
+    supXD['sup_xd_flag']=1
+    
+    # merge with main df
+    df_supplierbypass_flaged=df_CG.merge(supDA,on=['suid',DAname],how='left').merge(supXD,on=['suid',XDname],how='left')
+    # fillna with 0
+    df_supplierbypass_flaged['sup_da_flag']=df_supplierbypass_flaged['sup_da_flag'].fillna(0)
+    df_supplierbypass_flaged['sup_xd_flag']=df_supplierbypass_flaged['sup_xd_flag'].fillna(0)
+    
+    
+    
+    return df_supplierbypass_flaged
+ 
+ # generate PP_DA bypass list
+ def get_ppTOdaBypass(df_supplierbypass_flaged,DAname,PPname,PF_cube):
+    
+    # filter eligible volume : non supplier bypass & colocated CG
+    df_eligible=df_supplierbypass_flaged[(df_supplierbypass_flaged.sup_da_flag==0)&
+                                         (df_supplierbypass_flaged.sup_xd_flag==0)&
+                                         (df_supplierbypass_flaged.CG_DA==0)&
+                                        (df_supplierbypass_flaged.PP_warehouse!=df_supplierbypass_flaged.XD_warehouse)&
+                                         (df_supplierbypass_flaged.XD_warehouse!=df_supplierbypass_flaged.DA_warehouse)&
+                                        (df_supplierbypass_flaged[PPname] !='nonPP')]
+    
+    
+    df_ppda=(df_eligible.groupby([PPname,DAname])[PF_cube].
+         agg({PF_cube: 'sum','flag_Kent':'count'}).reset_index().sort_values(by=PF_cube,ascending=False))
+
+    ## assuming: 1.5 times per week; 2.950cube/truck
+    df_bypass_PPtoDA=df_ppda[(df_ppda[PF_cube] >=19000)]
+    
+    
+    return df_bypass_PPtoDA
+    
+    
+### Examples    
+# Kent to Perris
+
+## Supplier bypass
+df_KPerris=get_CGflag(df,'DA_rhonda_v5','Optimized XD Mapping with XD Lathrop','PP1_KenttoPerris')
+
+df_bypass_SUPtoDA_KPerris,df_bypass_SUPtoXD_KPerris=(get_supplierBypass(df_KPerris,
+                                                                        supplier_list,
+                                                                        'DA_rhonda_v5',
+                                                                        'Optimized XD Mapping with XD Lathrop',
+                                                                        'PP1_KenttoPerris',
+                                                                        'PF_cube_KP'))
+
+df_bypass_SUPtoXD_KPerris=adjust_forwardPosition(df_bypass_SUPtoXD_KPerris,'Optimized XD Mapping with XD Lathrop')
+
+
+
+# PP to DA bypass
+df_supplierbypass_flaged_KPerris=filterOut_supplierBypass(df_bypass_SUPtoDA_KPerris,df_bypass_SUPtoXD_KPerris,
+                                                          'DA_rhonda_v5',
+                                                          'Optimized XD Mapping with XD Lathrop',
+                                                          df_KPerris)
+
+df_bypass_PPtoDA_KPerris=get_ppTOdaBypass(df_supplierbypass_flaged_KPerris,
+                                          'DA_rhonda_v5',
+                                          'PP1_KenttoPerris',
+                                          'PF_cube_KP')
+
+# output
+df_bypass_SUPtoDA_KPerris.to_csv('df_bypass_SUPtoDA_KPerris.csv')
+df_bypass_SUPtoXD_KPerris.to_csv('df_bypass_SUPtoXD_KPerris.csv')
+df_bypass_PPtoDA_KPerris.to_csv('df_bypass_PPtoDA_KPerris.csv')
