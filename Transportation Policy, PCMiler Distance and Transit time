@@ -1,0 +1,88 @@
+# to generate OD pairs from a facility list 
+def get_OriginDestination(df):
+    
+    #generate an all to all list
+    df['key']=1
+    df=df.merge(df,on='key',how='left')
+    df=df.drop(['key'],axis=1)
+
+    # we assume symmetric distance(A->B = B->A),so drop duplicates 
+    df['Minimum'] = df.loc[:, ['facility_ID_x', 'facility_ID_y']].min(axis=1)
+    df['Maximum'] = df.loc[:, ['facility_ID_x', 'facility_ID_y']].max(axis=1)
+
+    df['Minimum'] =df['Minimum'].apply(str)
+    df['Maximum'] =df['Maximum'].apply(str)
+
+    df['flag']=df['Minimum']+"_"+df['Maximum']
+
+    df_cleaned=df.drop_duplicates(subset=['flag'])
+
+    df_cleaned.sort_values(by=['flag']).head()
+    
+    return df
+    
+    
+ # import file and get it ready for PCMiler and Chainaltics
+def prepare_forDistanceCalculation(df):
+    
+    # fill in zip with 0
+    df['OriginZip']=df['OriginZip'].astype(str).str.zfill(5)
+    df['DestinationZip']=df['DestinationZip'].astype(str).str.zfill(5)
+
+    #fill in Country
+    df['OriginCountry']=df['OriginZip'].apply(lambda x:'USA' if len(x)<=5 else 'CAN')
+    df['DestinationCountry']=df['DestinationZip'].apply(lambda x:'USA' if len(x)<=5 else 'CAN')
+
+    # adjust column sequnece
+    df=df[['Origin','OriginZip','OriginCountry', 'Destination', 'DestinationZip', 'DestinationCountry']].copy()
+
+    df['distance']=-1
+    
+    return(df)
+ 
+ # get PCMiler distance
+ def getPCMilerDistance(originZip,destZip):
+    
+    # first part of the url
+    url = 'http://tms.csnzoo.com:8081/miler/calc_distance?originzip='
+    final_url = url + originZip + '&destzip=' + destZip
+        
+    # get distance data from PC Miler
+    r = requests.get(final_url)
+    distance = r.json()    
+    
+    return distance
+
+for i in range(0,len(df)):
+    df['distance'][i]=getPCMilerDistance(df['OriginZip'][i],df['DestinationZip'][i])
+    
+# testing 
+# correct same facility situation 
+df.loc[df['OriginZip']==df['DestinationZip'],'distance']=0
+
+################
+# check whether any remainingrecords with distance=-1
+df[df['distance']==-1]
+
+# correct unrecognized/uncalculated records using PCMiler web (ignore if not exist)
+
+def fillUnrecognizedDistance(df,OriginZip,DestinationZip,distance):
+    
+    df.loc[(df['OriginZip']==OriginZip)&(df['DestinationZip']==DestinationZip),'distance']=distance
+    
+    return df
+
+# one example
+df=fillUnrecognizedDistance(df,'92571','V3Z 0N2',1322)
+
+# maximum driving hours, DOT rule
+dotmax=45*11
+
+def get_transittime(df,dotmax):
+
+    # calculation
+    df['TransitTime']=df['distance'].apply(lambda x: (x/45+10*(np.floor(x/dotmax)))/24 if x<=dotmax else x/dotmax)
+        
+    return df
+
+df=get_transittime(df,dotmax)
