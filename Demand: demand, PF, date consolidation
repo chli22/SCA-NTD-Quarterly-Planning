@@ -1,0 +1,108 @@
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import warnings
+warnings.filterwarnings('ignore')
+
+def get_DemandConsolidation(df,periodName):
+    
+    # get Period 
+    period=pd.DataFrame(data=df[periodName].drop_duplicates()).reset_index()
+    
+    # get Forecast date
+    date=pd.DataFrame(data=df['forecast_date'].drop_duplicates()).sort_values(by='forecast_date').reset_index()
+    
+    # consolidation
+    period_consolidated=period.copy()
+    period_consolidated['forecast_date']=date['forecast_date']
+    period_consolidated['dayofweek']=pd.to_datetime(period_consolidated['forecast_date']).dt.dayofweek
+    
+    # consolidate volume to Monday, Wendesday,Friday
+    period_consolidated['flag_keep']=period_consolidated['dayofweek'].apply(lambda x:1 if x%2 ==0 and x !=6 else 0)
+    selected_period=period_consolidated[period_consolidated.flag_keep==1][periodName]
+    
+    # 
+    period_select=period_consolidated[period_consolidated['flag_keep']==1]
+    period_select['ref']=np.arange(0,len(period_select))
+    period_select['adjusted_Period']=period_select[periodName].copy()
+    
+    unperiod_select=period_consolidated[period_consolidated['flag_keep']==0]
+    unperiod_select['ref'] =-1
+    unperiod_select['ref'] = unperiod_select['ref'].apply(lambda x:np.random.randint(1, len(period_select)))
+    unperiod_select=unperiod_select.merge(period_select[['ref','adjusted_Period']],on='ref',how='left')
+    
+    # get clean Period list
+    period_final=period_select.append(unperiod_select)
+    period_final=period_final[[periodName,'adjusted_Period']].copy()
+    
+    df_consolidated=df.merge(period_final,on=periodName,how='left')
+    
+    return df_consolidated
+    
+    
+    
+#flag Sup_DA and flag Sup_XD, and creat new PF name
+def get_supplierBypassDF(df,supDA,supXD,DAname,XDname,PF_cube,nobypassPF_Name,bypassPF_Name):
+    
+    # 
+    supDA=supDA[['suid',DAname]]
+    supXD=supXD[['suid',XDname]]
+    supDA['supDA_flag']=1
+    supXD['supXD_flag']=1
+    
+    # merge flag to main df
+    df_bypass=(df.merge(supDA,on=['suid',DAname],how='left').merge(supXD,on=['suid',XDname],how='left')).fillna(0)
+    
+    # generate new column and replace with new PF 
+    df_bypass[bypassPF_Name]=df_bypass[nobypassPF_Name].copy()
+    
+    df_bypass[bypassPF_Name]=np.where((df_bypass['supXD_flag']==1),
+                               df_bypass[nobypassPF_Name]+"_Sup_"+df_bypass['suid'].astype(str),
+                               df_bypass[bypassPF_Name])
+    df_bypass[bypassPF_Name]=np.where((df_bypass['supDA_flag']==1),
+                               df_bypass[nobypassPF_Name]+"_Sup_"+df_bypass['suid'].astype(str),
+                               df_bypass[bypassPF_Name])
+    
+    return df_bypass_sup
+    
+    
+#flag PP_DA
+def get_ppDA_flag(df_bypass_sup,ppDA，DAname,PPname):
+    
+    ppDA=ppDA[[DAname,PPname]]
+    ppDA['ppDA_flag']=1
+    
+    df_bypass=df_bypass_sup.merge(ppDA,on=[PPname,DAname],how='left')
+    df_bypass['ppDA_flag']=df_bypass['ppDA_flag'].fillna(0)
+    
+    return df_bypass
+    
+    
+ ## demand fileMississauga
+
+def get_demand(df,DAname,PFname,periodName):
+    
+    #
+    df_demand=(df.groupby([periodName,DAname,PFname],as_index=False)
+               ['forecast_date'].count().
+               rename(index=str,columns={periodName:'Period',DAname:'Customer',PFname:'Product','forecast_date':'Quantity'}))
+    df_demand['Mode']=''
+    
+    # check PO_count
+    print(df_demand.Quantity.sum()==df.shape[0])
+    
+    # remove nonPP
+    df_demand=df_demand[df_demand['Product'].str.contains('nonPP')==False]
+    
+    # remove CanadatoUS volume
+    df_demand=df_demand.drop(df_demand[(df_demand['Product'].str.contains('Mississauga')==True) & 
+                                       (df_demand['Customer'].str.contains('_CAN')==False)].index)
+    
+    return df_demand
+    
+# get PF table    
+def get_PF_table(df_bypass_KPerris,PF_name,PF_cube,PF_weight):
+    
+    df_PF=df_demand[[PF_name,PF_cube,PF_weight]].copy().drop_duplicates()
+    
+    return df_PF
